@@ -1,0 +1,117 @@
+﻿<div class="shell">
+  <header class="topbar">
+    <div>
+      <h1>{{ title() }}</h1>
+      <p class="sub">Offline-first + Event Sourcing + Realtime Sync</p>
+    </div>
+    <span class="status-chip" [class.offline]="!isOnline()">{{ isOnline() ? 'Online' : 'Offline' }}</span>
+  </header>
+
+  <div class="layout">
+    <aside class="card calendar-card">
+      <div class="cal-head">
+        <button class="icon-btn ghost" (click)="prevMonth()" title="Tháng trước" aria-label="Tháng trước">◀</button>
+        <strong>{{ (viewDate$ | async) | date:'MMMM yyyy' }}</strong>
+        <button class="icon-btn ghost" (click)="nextMonth()" title="Tháng sau" aria-label="Tháng sau">▶</button>
+      </div>
+
+      <div class="week">
+        <span *ngFor="let w of weekDays">{{ w }}</span>
+      </div>
+
+      <ng-container *ngIf="(calendarCells$ | async) as calendarCells">
+        <ng-container *ngIf="(selectedDayKey$ | async) as selectedDayKey">
+          <div class="grid">
+            <button
+              *ngFor="let c of calendarCells; trackBy: trackByCell"
+              class="day"
+              [class.out]="!c.inMonth"
+              [class.today]="isToday(c.date)"
+              [class.selected]="isSelected(c.dayKey, selectedDayKey)"
+              (click)="selectDay(c.date)">
+              <span>{{ c.date.getDate() }}</span>
+              <small *ngIf="c.count > 0">{{ c.count }}</small>
+            </button>
+          </div>
+        </ng-container>
+      </ng-container>
+    </aside>
+
+    <main>
+      <section class="card add-card">
+        <input class="title-input" [(ngModel)]="newTitle" placeholder="Nhập công việc..." (keyup.enter)="addTodo()" />
+        <div class="priority-group add-priority">
+          <button
+            *ngFor="let p of priorities"
+            type="button"
+            class="priority-pill"
+            [class.active]="newPriority === p"
+            [class.low]="p === 'LOW'"
+            [class.medium]="p === 'MEDIUM'"
+            [class.high]="p === 'HIGH'"
+            (click)="newPriority = p">
+            {{ p }}
+          </button>
+        </div>
+        <button class="icon-btn primary" (click)="addTodo()" title="Thêm" aria-label="Thêm">＋</button>
+      </section>
+
+      <section class="card list-card">
+        <div class="selected-label">Ngày chọn: <strong>{{ (selectedDate$ | async) | date:'dd/MM/yyyy' }}</strong></div>
+
+        <div class="list-header">
+          <span>#</span><span>Công việc</span><span>Ưu tiên</span><span>Thao tác</span>
+        </div>
+
+        <div class="row" *ngFor="let t of (filteredTodos$ | async); let i = index; trackBy: trackByTodo">
+          <div class="idx">{{ i + 1 }}</div>
+
+          <div class="todo-col" *ngIf="editingId !== t.id; else editRow">
+            <label>
+              <input type="checkbox" [checked]="t.completed" (change)="toggle(t.id)" />
+              <span [class.done]="t.completed">{{ t.title }}</span>
+            </label>
+          </div>
+
+          <ng-template #editRow>
+            <div class="edit-col">
+              <input [(ngModel)]="editingTitle" (keyup.enter)="saveEdit(t.id)" />
+            </div>
+          </ng-template>
+
+          <div *ngIf="editingId !== t.id; else editPriority" class="priority-badge" [class]="'priority-badge ' + priorityClass(t.priority)">
+            {{ t.priority }}
+          </div>
+          <ng-template #editPriority>
+            <div class="priority-group">
+              <button
+                *ngFor="let p of priorities"
+                type="button"
+                class="priority-pill"
+                [class.active]="editingPriority === p"
+                [class.low]="p === 'LOW'"
+                [class.medium]="p === 'MEDIUM'"
+                [class.high]="p === 'HIGH'"
+                (click)="editingPriority = p">
+                {{ p }}
+              </button>
+            </div>
+          </ng-template>
+
+          <div class="actions" *ngIf="editingId !== t.id; else editActions">
+            <button class="icon-btn ghost" (click)="beginEdit(t)" title="Sửa" aria-label="Sửa">✎</button>
+            <button class="icon-btn danger" (click)="delete(t.id)" title="Xóa" aria-label="Xóa">🗑</button>
+          </div>
+          <ng-template #editActions>
+            <div class="actions">
+              <button class="icon-btn primary" (click)="saveEdit(t.id)" title="Lưu" aria-label="Lưu">✓</button>
+              <button class="icon-btn ghost" (click)="cancelEdit()" title="Hủy" aria-label="Hủy">✕</button>
+            </div>
+          </ng-template>
+        </div>
+
+        <div class="empty" *ngIf="(filteredTodos$ | async)?.length === 0">Không có công việc cho ngày này.</div>
+      </section>
+    </main>
+  </div>
+</div>
