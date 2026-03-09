@@ -1,0 +1,115 @@
+﻿<div class="shell">
+  <header class="topbar">
+    <div>
+      <h1>{{ title() }}</h1>
+      <p class="sub">Offline-first + Event Sourcing + Realtime Sync</p>
+    </div>
+    <span class="status-chip" [class.offline]="!isOnline()">{{ isOnline() ? 'Online' : 'Offline' }}</span>
+  </header>
+
+  <div class="layout">
+    <aside class="card calendar-card">
+      <div class="cal-head">
+        <button class="icon-btn ghost" (click)="prevMonth()" title="Tháng trước" aria-label="Tháng trước"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <strong>{{ (viewDate$ | async) | date:'MMMM yyyy' }}</strong>
+        <button class="icon-btn ghost" (click)="nextMonth()" title="Tháng sau" aria-label="Tháng sau"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+      </div>
+
+      <div class="week">
+        <span *ngFor="let w of weekDays">{{ w }}</span>
+      </div>
+
+      <ng-container *ngIf="(calendarCells$ | async) as calendarCells">
+        <ng-container *ngIf="(selectedDayKey$ | async) as selectedDayKey">
+          <div class="grid">
+            <button
+              *ngFor="let c of calendarCells; trackBy: trackByCell"
+              class="day"
+              [class.out]="!c.inMonth"
+              [class.today]="isToday(c.date)"
+              [class.selected]="isSelected(c.dayKey, selectedDayKey)"
+              (click)="selectDay(c.date)">
+              <span>{{ c.date.getDate() }}</span>
+              <small *ngIf="c.count > 0">{{ c.count }}</small>
+            </button>
+          </div>
+        </ng-container>
+      </ng-container>
+    </aside>
+
+    <main>
+      <section class="card add-card">
+        <input class="title-input" [(ngModel)]="newTitle" placeholder="Nhập công việc..." (keydown.enter)="$event.preventDefault(); addTodo()" />
+        <div class="priority-group add-priority">
+          <button
+            *ngFor="let p of priorities"
+            type="button"
+            class="priority-pill"
+            [class.active]="newPriority === p"
+            [class.low]="p === 'LOW'"
+            [class.medium]="p === 'MEDIUM'"
+            [class.high]="p === 'HIGH'"
+            (click)="newPriority = p">
+            {{ p }}
+          </button>
+        </div>
+        <button class="icon-btn primary" (click)="addTodo()" title="Thêm" aria-label="Thêm"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      </section>
+
+      <section class="card list-card">
+        <div class="selected-label">Ngày chọn: <strong>{{ (selectedDate$ | async) | date:'dd/MM/yyyy' }}</strong></div>
+
+        <div class="list-header">
+          <span>Công việc</span><span>Ưu tiên</span><span>Thao tác</span>
+        </div>
+
+        <div cdkDropList [cdkDropListData]="(filteredTodos$ | async) ?? []" (cdkDropListDropped)="reorderTasks($event)">
+          <div class="row" cdkDrag *ngFor="let t of (filteredTodos$ | async); trackBy: trackByTodo">
+            <div class="todo-col" *ngIf="editingId !== t.id; else editRow">
+              <label>
+                <input type="checkbox" [checked]="t.completed" (change)="toggle(t.id)" />
+                <span [class.done]="t.completed">{{ t.title }}</span>
+              </label>
+            </div>
+
+            <ng-template #editRow>
+              <div class="edit-col">
+                <input [(ngModel)]="editingTitle" (keyup.enter)="saveEdit(t.id)" />
+              </div>
+            </ng-template>
+
+            <button type="button" *ngIf="editingId !== t.id; else editPriority" class="priority-badge" [class]="'priority-badge ' + priorityClass(t.priority)" (click)="quickCyclePriority(t)">
+              {{ t.priority }}
+            </button>
+            <ng-template #editPriority>
+              <div class="edit-priority-spacer"></div>
+            </ng-template>
+
+            <div class="actions" *ngIf="editingId !== t.id; else editActions">
+              <button type="button" class="icon-btn ghost drag-handle" cdkDragHandle title="Kéo đổi thứ tự" aria-label="Kéo đổi thứ tự">⋮⋮</button>
+              <button class="icon-btn ghost" (click)="beginEdit(t)" title="Sửa" aria-label="Sửa"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l10-10a2.2 2.2 0 0 0-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg></button>
+              <button class="icon-btn danger" (click)="delete(t.id)" title="Xóa" aria-label="Xóa"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M7 7l1 12h8l1-12"/></svg></button>
+            </div>
+            <ng-template #editActions>
+              <div class="actions">
+                <button class="icon-btn primary" (click)="saveEdit(t.id)" title="Lưu" aria-label="Lưu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5L19 8"/></svg></button>
+                <button class="icon-btn ghost" (click)="cancelEdit()" title="Hủy" aria-label="Hủy"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+              </div>
+            </ng-template>
+          </div>
+        </div>
+
+        <div class="empty" *ngIf="(filteredTodos$ | async)?.length === 0">Không có công việc cho ngày này.</div>
+      </section>
+    </main>
+  </div>
+</div>
+
+
+
+
+
+
+
+
+
