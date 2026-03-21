@@ -59,6 +59,9 @@
         },
         "serve": {
           "builder": "@angular/build:dev-server",
+          "options": {
+            "allowedHosts": ["*"]
+          },
           "configurations": {
             "production": {
               "buildTarget": "todolist:build:production"

@@ -1,4 +1,4 @@
-﻿import { Injectable } from '@angular/core';
+import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { TodoEvent, TodoItem } from '../models/todo.model';
@@ -15,7 +15,9 @@ export interface ChangeEnvelope {
 
 export interface V2PullResponse {
   changes?: ChangeEnvelope[];
-  serverWatermark?: number;
+  todos?: TodoItem[];
+  lastChangeId?: string;
+  serverWatermark?: string;
   nextCursor?: string | null;
   hasMore?: boolean;
 }
@@ -24,62 +26,50 @@ export interface PullResult {
   mode: SyncMode;
   todos: TodoItem[];
   serverTime: number;
-  serverWatermark: number;
+  serverWatermark: number | string;
   nextCursor?: string | null;
   hasMore: boolean;
 }
 
 @Injectable({ providedIn: 'root' })
 export class SyncApiService {
-  private baseUrl = '/api/sync';
+  private v2Url = '/api/v2/sync';
 
   constructor(private http: HttpClient) {}
 
   pushEvents(events: TodoEvent[]): Promise<{ acceptedEventIds: string[] }> {
-    return firstValueFrom(this.http.post<{ acceptedEventIds: string[] }>(`${this.baseUrl}/push`, { events }));
-  }
-
-  pullTodos(since: number): Promise<{ todos: TodoItem[]; serverTime: number }> {
-    return firstValueFrom(this.http.get<{ todos: TodoItem[]; serverTime: number }>(`${this.baseUrl}/pull?since=${since}`));
+    return firstValueFrom(this.http.post<{ acceptedEventIds: string[] }>(`${this.v2Url}/push`, { events }));
   }
 
   async pullIncremental(opts: {
-    sinceChangeId: number;
+    sinceChangeId: number | string;
     lastSyncAt: number;
     limit: number;
     cursor?: string;
   }): Promise<PullResult> {
-    try {
-      const v2 = await this.pullV2(opts.sinceChangeId, opts.limit, opts.cursor);
-      return {
-        mode: 'v2',
-        todos: this.extractTodosFromChanges(v2.changes ?? []),
-        serverTime: Date.now(),
-        serverWatermark: Number(v2.serverWatermark ?? opts.sinceChangeId),
-        nextCursor: v2.nextCursor ?? null,
-        hasMore: Boolean(v2.hasMore) || Boolean(v2.nextCursor),
-      };
-    } catch {
-      const v1 = await this.pullTodos(opts.lastSyncAt);
-      return {
-        mode: 'v1',
-        todos: v1.todos ?? [],
-        serverTime: Number(v1.serverTime || Date.now()),
-        serverWatermark: opts.sinceChangeId,
-        nextCursor: null,
-        hasMore: false,
-      };
-    }
+    const v2 = await this.pullV2(String(opts.sinceChangeId), opts.limit, opts.cursor);
+    return {
+      mode: 'v2',
+      todos: v2.todos && v2.todos.length > 0 ? v2.todos : this.extractTodosFromChanges(v2.changes ?? []),
+      serverTime: Date.now(),
+      serverWatermark: v2.serverWatermark ?? v2.lastChangeId ?? opts.sinceChangeId,
+      nextCursor: v2.nextCursor ?? null,
+      hasMore: Boolean(v2.hasMore) || Boolean(v2.nextCursor),
+    };
   }
 
-  private pullV2(sinceChangeId: number, limit: number, cursor?: string): Promise<V2PullResponse> {
-    let params = new HttpParams()
-      .set('sinceChangeId', String(sinceChangeId))
-      .set('limit', String(limit));
+  private pullV2(sinceChangeId: string, limit: number, cursor?: string): Promise<V2PullResponse> {
+    let params = new HttpParams().set('limit', String(limit));
+
+    // Only send sinceChangeId if it looks like a valid UUID (not '0' or a numeric timestamp)
+    const isValidGuid = sinceChangeId && /^[0-9a-f]{8}-/i.test(sinceChangeId);
+    if (isValidGuid) {
+      params = params.set('sinceChangeId', sinceChangeId);
+    }
 
     if (cursor) params = params.set('cursor', cursor);
 
-    return firstValueFrom(this.http.get<V2PullResponse>(`${this.baseUrl}/v2/pull`, { params }));
+    return firstValueFrom(this.http.get<V2PullResponse>(`${this.v2Url}/pull`, { params }));
   }
 
   private extractTodosFromChanges(changes: ChangeEnvelope[]): TodoItem[] {

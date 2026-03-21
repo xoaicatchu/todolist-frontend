@@ -1,10 +1,11 @@
-﻿import { Component, inject, signal } from '@angular/core';
+import { Component, inject, signal } from '@angular/core';
 import { AsyncPipe, DatePipe, NgFor, NgIf } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { BehaviorSubject, combineLatest, map, shareReplay } from 'rxjs';
 import { Store } from '@ngrx/store';
 import { CdkDragDrop, DragDropModule, moveItemInArray } from '@angular/cdk/drag-drop';
 import { TodoActions } from './state/todo.actions';
+import { selectTodos } from './state/todo.selectors';
 import { NetworkService } from './core/services/network.service';
 import { RealtimeSyncService } from './core/services/realtime-sync.service';
 import { EventSourcingService } from './core/services/event-sourcing.service';
@@ -43,7 +44,10 @@ export class App {
   selectedDate$ = this.selectedDateSubject.asObservable();
   viewDate$ = this.viewDateSubject.asObservable();
 
-  todos$ = this.eventSourcing.watchTodos().pipe(
+  // Use ngrx store as single source of truth for UI rendering.
+  // Both local changes (via effects) and server sync (via TodoActions.load())
+  // flow through the store, ensuring reliable UI updates across tabs.
+  todos$ = this.store.select(selectTodos).pipe(
     map(items => items.filter(x => !!x.dayKey)),
     shareReplay(1)
   );
