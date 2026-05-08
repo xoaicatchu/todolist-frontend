@@ -83,153 +83,185 @@
 - Khi nhận `'todosChanged'` → trigger full sync
 - Fallback retry mỗi 5 giây khi connection đứt
 
-## III.Tổng Quan Hệ Thống
+## III. Tổng Quan Hệ Thống
 
-```mermaid
-graph TB
-    subgraph "☁️ Cloud / Backend"
-        AZURE["Azure Web App"]
-        NGINX["NGINX Reverse Proxy<br/>:8080"]
-        BACKEND[".NET Backend API<br/>:3000"]
-        RABBIT["RabbitMQ<br/>Async Write Queue"]
-        DB[(PostgreSQL / SQL Server)]
+### 1. CQRS Là Gì
 
-        NGINX --> BACKEND
-        BACKEND --> RABBIT
-        RABBIT --> DB
-        BACKEND --> DB
-    end
-
-    subgraph "🖥️ Browser Client"
-        subgraph "Angular 21 PWA"
-            UI["App Component<br/>Calendar + Todo List<br/>CDK Drag & Drop"]
-            STORE["NgRx Store<br/>todoReducer"]
-            EFFECTS["NgRx Effects<br/>TodoEffects"]
-            SELECTORS["Selectors<br/>selectTodos"]
-        end
-
-        subgraph "Core Services"
-            ES["📦 EventSourcingService<br/>Ghi event + chiếu thành state<br/>⎯ append · apply · watchTodos"]
-            SYNC["🎯 SyncService — Orchestrator<br/>Điều phối toàn bộ quy trình sync<br/>⎯ push unsynced → pull changes → reconcile"]
-            API["🌐 SyncApiService — HTTP Transport<br/>Gọi REST API đến backend<br/>⎯ POST /push · GET /pull"]
-            RT["📡 RealtimeSyncService — Cross-Device<br/>Nhận thông báo realtime từ server<br/>⎯ SignalR WebSocket /hubs/sync"]
-            NET["🔌 NetworkService<br/>Theo dõi online/offline"]
-            TAB["📋 TabRealtimeService — Multi-Tab<br/>Đồng bộ giữa các tab cùng browser<br/>⎯ BroadcastChannel + localStorage"]
-        end
-
-        subgraph "Infrastructure"
-            DEXIE["AppDbService<br/>Dexie IndexedDB"]
-            SW["Service Worker<br/>ngsw / PWA Cache"]
-        end
-    end
-
-    subgraph "🔄 Sibling Tabs"
-        TAB2["Other Browser Tabs"]
-    end
-
-    UI -->|"dispatch actions"| STORE
-    STORE -->|"select"| SELECTORS --> UI
-    STORE -->|"actions$"| EFFECTS
-    EFFECTS -->|"append events"| ES
-    EFFECTS -->|"sync()"| SYNC
-    EFFECTS -->|"notifyChanged()"| TAB
-    ES -->|"read/write"| DEXIE
-    SYNC -->|"pushEvents / pullIncremental"| API
-    SYNC -->|"applyServerTodos"| ES
-    SYNC -->|"check online"| NET
-    API -->|"HTTP POST/GET"| BACKEND
-    RT -->|"SignalR WebSocket"| BACKEND
-    RT -->|"todosChanged → sync()"| SYNC
-    RT -->|"dispatch load()"| STORE
-    TAB -->|"BroadcastChannel +<br/>localStorage ping"| TAB2
-    TAB2 -->|"dispatch load()"| STORE
-    SW -->|"cache assets"| UI
-```
-
-## Luồng Dữ Liệu Chi Tiết
-
-```mermaid
-sequenceDiagram
-    participant U as 👤 User
-    participant UI as App Component
-    participant S as NgRx Store
-    participant E as Effects
-    participant ES as EventSourcing
-    participant DB as IndexedDB (Dexie)
-    participant Sync as SyncService
-    participant API as SyncApiService
-    participant BE as Backend :3000
-    participant RT as SignalR Hub
-    participant T as TabRealtime
-
-    Note over U,T: 📝 Tạo Todo Mới (Optimistic + Event Sourcing)
-    U->>UI: Nhập title, chọn priority
-    UI->>S: dispatch Add action
-    S->>E: action$ stream
-    E->>ES: append(TODO_CREATED)
-    ES->>DB: events.add(event)
-    ES->>DB: todos.put(newItem)
-    E->>T: notifyChanged()
-    T-->>T: BroadcastChannel.postMessage()
-    E->>Sync: sync()
-    Sync->>API: pushEvents(unsyncedEvents)
-    API->>BE: POST /api/v2/sync/push
-    BE-->>API: { acceptedEventIds }
-    Sync->>API: pullIncremental()
-    API->>BE: GET /api/v2/sync/pull
-    BE-->>API: { todos, serverWatermark }
-    Sync->>ES: applyServerTodos()
-    ES->>DB: todos.put(serverItems)
-    Sync->>S: dispatch load()
-    E->>ES: getAllTodos()
-    ES->>DB: todos.toArray()
-    DB-->>ES: items[]
-    E->>S: loadSuccess(items)
-    S-->>UI: Updated state
-
-    Note over RT,BE: 📡 Real-time từ Server (thiết bị khác thay đổi)
-    BE->>RT: SignalR "todosChanged"
-    RT->>S: dispatch load()
-    RT->>Sync: sync()
-    Sync->>API: pullIncremental()
-    API->>BE: GET /api/v2/sync/pull
-    BE-->>API: { todos, serverWatermark }
-    Sync->>ES: applyServerTodos()
-    ES->>DB: todos.put()
-    Sync->>S: dispatch load()
-```
-
-## IV. Cấu Trúc Thư Mục
+**Command Query Responsibility Segregation** — tách riêng đường đọc (Query) và đường ghi (Command) thành 2 model/path hoàn toàn độc lập.
 
 ```
-todolist/
-├── src/app/
-│   ├── app.ts                    # Root component (Calendar + TodoList UI)
-│   ├── app.html / app.scss       # Template & styles
-│   ├── app.config.ts             # Angular providers (NgRx, HttpClient, SW)
-│   ├── app.routes.ts             # Router config
-│   ├── core/
-│   │   ├── models/
-│   │   │   └── todo.model.ts     # TodoItem, TodoEvent, TodoPriority
-│   │   └── services/
-│   │       ├── event-sourcing.service.ts  # Event store + projection
-│   │       ├── sync.service.ts            # Push/Pull orchestrator  
-│   │       ├── sync-api.service.ts        # HTTP client for /api/v2/sync
-│   │       ├── realtime-sync.service.ts   # SignalR connection
-│   │       ├── network.service.ts         # Online/Offline detection
-│   │       └── tab-realtime.service.ts    # Multi-tab sync
-│   ├── infrastructure/
-│   │   └── db/
-│   │       └── app-db.service.ts  # Dexie IndexedDB (3 tables)
-│   └── state/
-│       ├── todo.actions.ts        # NgRx actions (Load, Add, Toggle, ...)
-│       ├── todo.effects.ts        # Side-effects orchestration
-│       ├── todo.reducer.ts        # State reducer
-│       └── todo.selectors.ts      # Memoized selectors
-├── .github/workflows/
-│   ├── azure-webapps-node.yml     # CI/CD → Azure Web App
-│   └── webpack.yml                # Build check
-├── load-tests/
-│   └── stress-test.js             # k6 stress test (20K CCU)
-└── proxy.conf.json                # Dev proxy → localhost:3000
+Truyền thống (CRUD):
+  Client → API → cùng 1 DB, cùng 1 model ← đọc & ghi chung
+
+CQRS:
+  Client → Command API → Write Model → Write DB
+  Client → Query API  → Read Model  → Read DB (có thể là replica/cache)
 ```
+
+---
+
+### 2. Tại Sao CQRS Quan Trọng
+
+2.1. Read và Write có bản chất khác nhau
+
+| | Read | Write |
+|---|---|---|
+| **Tần suất** | Thường 5-10x nhiều hơn write | Ít hơn |
+| **Yêu cầu** | Nhanh, denormalized, dễ query | Nhất quán, validate, business rules |
+| **Scale** | Horizontal (replicas, cache) | Vertical (lock, transaction) |
+| **Model** | Flat, optimized cho hiển thị | Normalized, optimized cho integrity |
+
+Dùng chung 1 model cho cả hai = **không tối ưu được cho bên nào**.
+
+2.2. Write blocking Read là lãng phí
+
+Khi 1 user INSERT/UPDATE → DB lock row/table → các user khác đang READ phải **chờ**. Tách ra thì read không bao giờ bị block bởi write.
+
+2.3. Trong TodoSync project
+
+```
+WRITE:  POST /push → events vào RabbitMQ → worker ghi DB      (async, 5-10ms response)
+READ:   GET  /pull → query DB trực tiếp                        (không bị lock bởi write)
+```
+
+Write trả response **ngay lập tức** (chỉ enqueue) — user không cần đợi DB xử lý xong.
+
+---
+
+### Khi NÊN dùng CQRS
+
+| Điều kiện | Giải thích |
+|-----------|------------|
+| **Read/Write ratio chênh lệch lớn** | Ví dụ: 90% read, 10% write → tối ưu read path riêng |
+| **Read và Write cần model khác nhau** | Write cần normalize, read cần denormalize/aggregate |
+| **Cần scale read và write độc lập** | Read scale bằng replicas, write scale bằng queue |
+| **Write cần async/eventual consistency chấp nhận được** | User chấp nhận delay vài giây để thấy data mới |
+| **Có event-driven architecture** | CQRS kết hợp tốt với Event Sourcing, message queue |
+| **High throughput** | >1K CCU write-heavy, hoặc >5K CCU read-heavy |
+
+### Khi KHÔNG NÊN dùng CQRS
+
+| Điều kiện | Giải thích |
+|-----------|------------|
+| **App CRUD đơn giản** | Blog, form admin, CRUD table — overhead không đáng |
+| **Cần strong consistency** | Giao dịch tài chính, banking — write xong phải thấy ngay |
+| **Team nhỏ, MVP** | Complexity cao, cần team hiểu pattern rõ |
+| **Read/Write dùng chung model** | Không có lý do tách |
+| **< 500 CCU** | Scale chưa phải vấn đề |
+
+### Checklist trước khi áp dụng
+
+- [ ] Read và Write có yêu cầu khác nhau rõ ràng?
+- [ ] Hệ thống chấp nhận eventual consistency?
+- [ ] Có message queue/event bus sẵn (RabbitMQ, Kafka...)?
+- [ ] Team hiểu CQRS và Event Sourcing?
+- [ ] Có monitoring để track read/write latency riêng?
+
+---
+
+## IV. Lợi Ích
+
+### Performance
+
+| Metric | Không CQRS | Có CQRS | Cải thiện |
+|--------|-----------|---------|-----------|
+| Write latency | 50-200ms (đợi DB) | 5-10ms (enqueue) | **10-20x** |
+| Read latency | Bị block bởi write lock | Không bị block | **2-5x** |
+| Throughput | ~1-2K CCU | ~10-20K CCU | **5-10x** |
+| DB connection usage | 1 pool chung | Tách pool read/write | **2x hiệu quả** |
+
+### Scalability
+
+| Khía cạnh | Lợi ích |
+|-----------|---------|
+| **Read scale** | Thêm DB read replicas, Redis cache — không ảnh hưởng write |
+| **Write scale** | Thêm queue workers — không ảnh hưởng read |
+| **Độc lập deploy** | Read service và Write service deploy/scale riêng |
+| **Failure isolation** | Write service chết → read vẫn hoạt động (và ngược lại) |
+
+### Architecture
+
+| Khía cạnh | Lợi ích |
+|-----------|---------|
+| **Separation of concerns** | Read logic và write logic không lẫn vào nhau |
+| **Dễ optimize từng phía** | Read dùng cache/denormalize, write dùng transaction/validation |
+| **Phù hợp Event Sourcing** | Events (write) → Projections (read) — tự nhiên |
+
+---
+
+## V. Đánh Đổi (Trade-offs)
+
+> [!WARNING]
+> Mọi lợi ích đều có giá. CQRS đánh đổi **simplicity** lấy **scalability**.
+
+### 1. Eventual Consistency
+
+| Vấn đề | Chi tiết |
+|--------|---------|
+| **Data delay** | Write xong, read có thể chưa thấy ngay (vài ms → vài giây) |
+| **Stale data** | User A tạo todo → User A pull ngay → có thể chưa thấy |
+| **UX phức tạp hơn** | Cần optimistic UI, loading states, retry logic |
+
+**Trong TodoSync:** User thêm todo → response 202 ngay → nhưng pull có thể chưa thấy todo mới vì worker chưa ghi xong. Giải quyết bằng optimistic UI (ghi local trước).
+
+### 2. Complexity
+
+| Vấn đề | So sánh |
+|--------|---------|
+| **Số component** | CRUD: 1 API + 1 DB → CQRS: 2 API + message queue + worker + có thể 2 DB |
+| **Code** | Gấp ~1.5-2x so với CRUD đơn giản |
+| **Debug** | Trace request qua nhiều service hơn |
+| **Testing** | Cần test cả write path, read path, và eventual consistency |
+
+```
+CRUD:    Client → API → DB                              (3 components)
+CQRS:    Client → Write API → Queue → Worker → Write DB (5 components)
+         Client → Read API → Read DB/Cache               (3 components thêm)
+```
+
+### 3. Infrastructure
+
+| Thêm gì | Chi phí |
+|---------|---------|
+| **Message Queue** (RabbitMQ/Kafka) | Server riêng, monitoring, HA |
+| **Read replicas** | Thêm DB instances |
+| **Cache layer** (Redis) | Server riêng, invalidation logic |
+| **Queue workers** | Thêm processes, auto-scaling |
+
+### 4. Data Consistency Challenges
+
+| Vấn đề | Chi tiết |
+|--------|---------|
+| **Duplicate processing** | Queue deliver 2 lần → cần idempotent handlers |
+| **Order guarantee** | Events có thể đến sai thứ tự → cần sequence/timestamp |
+| **Failed writes** | Event trong queue nhưng worker crash → cần retry + dead letter queue |
+| **Schema migration** | 2 model (read + write) → migrate cả 2 |
+
+---
+
+## VI. So Sánh Tổng Hợp
+
+| Tiêu chí | CRUD đơn giản | CQRS |
+|----------|--------------|------|
+| **Simplicity** | ⭐⭐⭐⭐⭐ | ⭐⭐ |
+| **Performance** | ⭐⭐ | ⭐⭐⭐⭐⭐ |
+| **Scalability** | ⭐⭐ | ⭐⭐⭐⭐⭐ |
+| **Consistency** | ⭐⭐⭐⭐⭐ (strong) | ⭐⭐⭐ (eventual) |
+| **Development cost** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
+| **Infrastructure cost** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
+| **Debugging** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
+| **Phù hợp cho** | <1K CCU, CRUD apps | >1K CCU, event-driven, high throughput |
+
+---
+
+## VI. Áp Dụng Trong TodoSync
+
+### Hiện trạng ✅
+
+| Thành phần | Vai trò CQRS |
+|-----------|-------------|
+| `POST /api/v2/sync/push` | **Command** — nhận events, enqueue vào RabbitMQ |
+| `GET /api/v2/sync/pull` | **Query** — đọc DB, trả changes theo watermark |
+| RabbitMQ | **Message bus** — async write, decouple command processing |
+| Response 202 (Accepted) | **Async acknowledgment** — không đợi DB write xong |
+
