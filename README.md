@@ -68,9 +68,6 @@
 - **NgRx Store** = read cache (RAM, mất khi refresh)
 - Data flow: Dexie → `getAllTodos()` → `dispatch(loadSuccess)` → NgRx → UI
 
-> [!WARNING]
-> **Hai kho chứa cùng dữ liệu** — phải dispatch `load()` thủ công ở nhiều nơi để đồng bộ. `liveQuery` đã viết sẵn nhưng chưa dùng — nếu dùng có thể bỏ NgRx, giảm phức tạp đáng kể.
-
 ### 7. Multi-tab Sync
 > **File:** [tab-realtime.service.ts](file:///d:/GitHub/todolist/src/app/core/services/tab-realtime.service.ts)
 
